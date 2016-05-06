@@ -18,13 +18,13 @@ import getpass
 import logging
 import random
 import string
+import multiprocessing
+import time
 
 try:
     from vspk import v3_2 as vsdk
 except ImportError:
     from vspk.vsdk import v3_2 as vsdk
-
-RANDOM_NAME = ""
 
 
 def get_args():
@@ -37,51 +37,90 @@ def get_args():
     parser.add_argument('-P', '--nuage-port', required=False, help='The Nuage VSD/SDK server port to connect to (default = 8443)', dest='nuage_port', type=int, default=8443)
     parser.add_argument('-p', '--nuage-password', required=False, help='The password with which to connect to the Nuage VSD/SDK host. If not specified, the user is prompted at runtime for a password', dest='nuage_password', type=str)
     parser.add_argument('-u', '--nuage-user', required=True, help='The username with which to connect to the Nuage VSD/SDK host', dest='nuage_username', type=str)
+    parser.add_argument('-t', '--thread-num', required=True, help='The number of thread for perforamce test', dest='thread_num', type=int, default=70)
     parser.add_argument('-v', '--verbose', required=False, help='Enable verbose output', dest='verbose', action='store_true')
     args = parser.parse_args()
     return args
 
 
-def worker(logger, session):
-    """Prepare enterprise, domain and subnets etc on VSD."""
-    global RANDOM_NAME
-    enterprise_name = u"NFV-ENTERPRISE-" + RANDOM_NAME
-    domain_name = u"NFV-DOMAIN-" + RANDOM_NAME
-    zone_name = u"NFV-ZONE-" + RANDOM_NAME
-    subnet_name = u"NFV-SUBNET-" + RANDOM_NAME
-    vport_name = u"NFV-VM-" + RANDOM_NAME
+def prepare(logger, session):
+    """Prepare enterprise on VSD."""
+    random_name = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
+    enterprise_name = u"NFV-ENTERPRISE-" + random_name
 
     try:
         # Create an enterprise with random name
         logger.info('Creating enterprise %s on VSD.' % (enterprise_name))
         enterprise = vsdk.NUEnterprise(name=enterprise_name)
         session.create_child(enterprise, async=False)
-
-        logger.info('Create domain %s on VSD.' % domain_name)
-        domain_template = vsdk.NUDomainTemplate(name=domain_name)
-        enterprise.create_child(domain_template, async=False)
-        domain = vsdk.NUDomain(name=domain_name, template_id=domain_template.id)
-        enterprise.create_child(domain, async=False)
-
-        logger.info('Associate floating ip to the domain %s on VSD.' % domain_name)
-
-        logger.info('Create zone %s in the domain %s on VSD.' % (zone_name, domain_name))
-        zone = vsdk.NUZone(name=zone_name, async=False)
-        domain.create_child(zone, async=False)
-
-        for i in range(2):
-            address = "10.10." + str(i) + ".0"
-            gateway = "10.10." + str(i) + ".1"
-            netmask = "255.255.255.0"
-            logger.info('Create subnet %s in the zone %s on VSD.' % (subnet_name + str(i), zone_name))
-            subnet = vsdk.NUSubnet(name=subnet_name + str(i), gateway=gateway, address=address, netmask=netmask)
-            zone.create_child(subnet, async=False)
     except Exception, e:
-        logger.error('NFV Testing on VSD failed.')
+        logger.error('Prepare enterprise on VSD failed.')
         logger.critical('Caught exception: %s' % str(e))
+        return None
+
+    return enterprise
+
+
+def do_work(logger, enterprise, queue, thread_id):
+    """Worker thread, call NFV Rest APIs on VSD."""
+    domain_name = u"NFV-DOMAIN-" + str(thread_id)
+    zone_name = u"NFV-ZONE-" + str(thread_id)
+    subnet_name = u"NFV-SUBNET-" + str(thread_id)
+    vport_name = u"NFV-VM-" + str(thread_id)
+
+    logger.info('Create domain %s on VSD.' % domain_name)
+    domain_template = vsdk.NUDomainTemplate(name=domain_name)
+    enterprise.create_child(domain_template, async=False)
+    domain = vsdk.NUDomain(name=domain_name, template_id=domain_template.id)
+    enterprise.create_child(domain, async=False)
+
+    logger.info('Associate floating ip to the domain %s on VSD.' % domain_name)
+
+    logger.info('Create zone %s in the domain %s on VSD.' % (zone_name, domain_name))
+    zone = vsdk.NUZone(name=zone_name, async=False)
+    domain.create_child(zone, async=False)
+
+    for i in range(2):
+        address = "10.10." + str(i) + ".0"
+        gateway = "10.10." + str(i) + ".1"
+        netmask = "255.255.255.0"
+        logger.info('Create subnet %s in the zone %s on VSD.' % (subnet_name + "-" + str(i), zone_name))
+        subnet = vsdk.NUSubnet(name=subnet_name + str(i), gateway=gateway, address=address, netmask=netmask)
+        zone.create_child(subnet, async=False)
+
+
+def worker(logger, enterprise, queue, thread_id):
+    """Worker thread, record the start and done time."""
+    result = ""
+
+    start = time.time()
+    try:
+        logger.info('Thread %s start at time %s' % (str(thread_id), str(start)))
+        do_work(logger, enterprise, queue, thread_id)
+    except Exception, e:
+        logger.error('NFV Testing on VSD failed on thread %s.' % (str(thread_id)))
+        logger.critical('Caught exception: %s' % str(e))
+        result = "Thread %s failed with exception %s" % (str(thread_id), str(e))
+        queue.put(result)
         return 1
 
+    done = time.time()
+    logger.info("Thread %s success at time %s" % (str(thread_id), str(done)))
+    queue.put("Thread %s success with time %s" % (str(thread_id), str(done - start)))
     return 0
+
+
+def collector(number_of_process, queue):
+    """Multiprocessing result collector."""
+    results = []
+    for i in range(number_of_process):
+        result = queue.get()
+        results.append(result)
+
+    with open('results', 'w') as f:
+        f.write('\n'.join(str(result)[:] for result in results))
+
+    f.close()
 
 
 def main():
@@ -99,10 +138,9 @@ def main():
     if args.nuage_password:
         nuage_password = args.nuage_password
     nuage_username = args.nuage_username
+    thread_num = args.thread_num
     verbose = args.verbose
 
-    global RANDOM_NAME
-    RANDOM_NAME = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
     # Logging settings
     if debug:
         log_level = logging.DEBUG
@@ -130,7 +168,32 @@ def main():
         logger.critical('Caught exception: %s' % str(e))
         return 1
 
-    worker(logger, session)
+    enterprise = prepare(logger, session)
+    if enterprise is None:
+        print "Prepare NFV performa testing failed, please check the log."
+        logger.error('Prepare NFV performa testing failed, please check the log.')
+        return 1
+
+    # Start multi threading test workers
+    record = []
+
+    queue = multiprocessing.Queue(100)
+    thread_num = 1
+    for i in range(thread_num):
+        worker_process = multiprocessing.Process(target=worker, args=(logger, enterprise, queue, i))
+        worker_process.start()
+        record.append(worker_process)
+
+    collector_process = multiprocessing.Process(target=collector, args=(len(record), queue))
+    collector_process.start()
+
+    for worker_process in record:
+        worker_process.join()
+
+    queue.close()
+
+    collector_process.join()
+
     return 0
 
 # Start program
