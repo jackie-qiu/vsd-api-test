@@ -26,7 +26,11 @@ try:
 except ImportError:
     from vspk.vsdk import v3_2 as vsdk
 
-SHARE_NETWORK_RESOURCE_ID = u'5874fca3-2bbb-442f-a4aa-ab8495f66634'
+# SHARE_NETWORK_RESOURCE_ID = u'5874fca3-2bbb-442f-a4aa-ab8495f66634'
+SHARE_NETWORK_RESOURCE_ID = u'18c717cd-755f-4e70-bd4d-b6fc1c1f8a0b'
+GATEWAY_ID = u'55fc6192-a51d-456b-a811-b3acd31bb229'
+VRSG_PORT_ID = u'dddfe0bb-11de-4ba6-a010-05ee8d2115b6'
+VLAN_BASE = 1000
 
 
 def get_args():
@@ -44,6 +48,12 @@ def get_args():
     parser.add_argument('-v', '--verbose', required=False, help='Enable verbose output', dest='verbose', action='store_true')
     args = parser.parse_args()
     return args
+
+
+def random_mac():
+    """Generate random MAC address."""
+    mac = [0x52, 0x54, 0x00, random.randint(0x00, 0x7f), random.randint(0x00, 0xff), random.randint(0x00, 0xff)]
+    return ':'.join(map(lambda x: "%02x" % x, mac))
 
 
 def prepare(logger, session):
@@ -97,6 +107,7 @@ def do_work(logger, session, enterprise, queue, thread_id):
             vport = vsdk.NUVPort(name="VPort %d-%d" % (i, j), type="VM", address_spoofing="INHERITED", multicast="INHERITED", associated_floating_ip_id=floatingip.id)
             subnet.create_child(vport)
 
+    enterprise.fetch()
     domain.fetch()
 
     for fip in domain.floating_ips.get():
@@ -105,16 +116,60 @@ def do_work(logger, session, enterprise, queue, thread_id):
         vport.save()
         fip.delete()
 
+    subnet_count = domain.subnets.get_count()
+    i = 0
+    pg_vports = []
+    for subnet in domain.subnets.get():
+        vsg_port = vsdk.NUPort(id=VRSG_PORT_ID)
+        vsg_port.fetch()
+        vlanid = VLAN_BASE + thread_id * subnet_count + i
+        vlan = vsdk.NUVLAN(value=vlanid)
+        enterprise_perm = vsdk.NUEnterprisePermission(permitted_entity_id=enterprise.id)
+        vsg_port.create_child(vlan, async=False)
+        vlan.create_child(enterprise_perm, async=False)
+        host_vport = vsdk.NUVPort(name="Host Vport %d" % i, type="HOST", address_spoofing="INHERITED", multicast="INHERITED", vlanid="%s" % vlan.id)
+        subnet.create_child(host_vport)
+        host_interface = vsdk.NUHostInterface(mac=random_mac())
+        host_vport.create_child(host_interface)
+        host_vport.fetch()
+        pg_vports.append(host_vport)
+        # TODO: Create Redirect target
+        rt = vsdk.NURedirectionTarget(name='NFV-TEST-RT-%d' % i)
+        domain.create_child(rt)
+        rt_vports = []
+        rt_vports.append(host_vport)
+        rt.assign(rt_vports, vsdk.NUVPort)
+
+        i = i + 1
+    # TODO: Create policy group
+    pg = vsdk.NUPolicyGroup(name='NFV-TEST-PG')
+    domain.create_child(pg)
+    pg.assign(pg_vports, vsdk.NUVPort)
+
 
 def clear(session):
     """Clear domain and enterrpise created during test."""
+    print "Clear domains ..."
     for domain in session.domains.get():
         if 'NFV-DOMAIN-' in domain.name:
+            for subnet in domain.subnets.get():
+                for vport in subnet.vports.get():
+                    for host_interface in vport.host_interfaces.get():
+                        host_interface.delete()
+                    vport.delete()
+                subnet.delete()
             domain.delete()
 
+    print "Clear enterprises ..."
     for enterprise in session.enterprises.get():
         if 'NFV-ENTERPRISE-' in enterprise.name:
             enterprise.delete()
+
+    print "Clear vsg port vlans ..."
+    vsg_port = vsdk.NUPort(id=VRSG_PORT_ID)
+    vsg_port.fetch()
+    for vlan in vsg_port.vlans.get():
+        vlan.delete()
 
 
 def worker(logger, session, enterprise, queue, thread_id):
