@@ -27,10 +27,12 @@ except ImportError:
     from vspk.vsdk import v3_2 as vsdk
 
 # SHARE_NETWORK_RESOURCE_ID = u'5874fca3-2bbb-442f-a4aa-ab8495f66634'
+ENTERPRISE_PROFILE_ID = u'ee203309-0912-4292-b0b0-691cb0166d78'
 SHARE_NETWORK_RESOURCE_ID = u'18c717cd-755f-4e70-bd4d-b6fc1c1f8a0b'
 GATEWAY_ID = u'55fc6192-a51d-456b-a811-b3acd31bb229'
 VRSG_PORT_ID = u'dddfe0bb-11de-4ba6-a010-05ee8d2115b6'
 VLAN_BASE = 1000
+SUBNET_NUM_PER_ZONE = 2
 
 
 def get_args():
@@ -43,7 +45,7 @@ def get_args():
     parser.add_argument('-P', '--nuage-port', required=False, help='The Nuage VSD/SDK server port to connect to (default = 8443)', dest='nuage_port', type=int, default=8443)
     parser.add_argument('-p', '--nuage-password', required=False, help='The password with which to connect to the Nuage VSD/SDK host. If not specified, the user is prompted at runtime for a password', dest='nuage_password', type=str)
     parser.add_argument('-u', '--nuage-user', required=True, help='The username with which to connect to the Nuage VSD/SDK host', dest='nuage_username', type=str)
-    parser.add_argument('-t', '--thread-num', required=False, help='The number of thread for perforamce test', dest='thread_num', type=int, default=5)
+    parser.add_argument('-t', '--thread-num', required=False, help='The number of thread for perforamce test', dest='thread_num', type=int, default=1)
     parser.add_argument('-c', '--clean', required=False, help='Clean the data after test', dest='clean', action='store_true')
     parser.add_argument('-v', '--verbose', required=False, help='Enable verbose output', dest='verbose', action='store_true')
     args = parser.parse_args()
@@ -65,8 +67,20 @@ def prepare(logger, session):
         # Create an enterprise with random name
         logger.info('Creating enterprise %s on VSD.' % (enterprise_name))
         print 'Creating enterprise %s on VSD.' % (enterprise_name)
-        enterprise = vsdk.NUEnterprise(name=enterprise_name)
+        enterprise = vsdk.NUEnterprise(name=enterprise_name, enterprise_profile_id=ENTERPRISE_PROFILE_ID)
         session.create_child(enterprise, async=False)
+        network_macros = []
+        for i in range(SUBNET_NUM_PER_ZONE):
+            address = "10.10." + str(i) + ".0"
+            netmask = "255.255.255.0"
+            subnet_name = u"Subnet " + str(i)
+            network_macro = vsdk.NUEnterpriseNetwork(name=subnet_name, address=address, netmask=netmask)
+            enterprise.create_child(network_macro, async=False)
+            network_macros.append(network_macro)
+
+        network_macro_group = vsdk.NUNetworkMacroGroup(name="NFV-MACRO-GROUP")
+        enterprise.create_child(network_macro_group, async=False)
+        network_macro_group.assign(network_macros, vsdk.NUEnterpriseNetwork)
     except Exception, e:
         logger.error('Prepare enterprise on VSD failed.')
         logger.critical('Caught exception: %s' % str(e))
@@ -91,7 +105,7 @@ def do_work(logger, session, enterprise, queue, thread_id):
     zone = vsdk.NUZone(name=u"Zone 0", async=False)
     domain.create_child(zone, async=False)
 
-    for i in range(2):
+    for i in range(SUBNET_NUM_PER_ZONE):
         address = "10.10." + str(i) + ".0"
         gateway = "10.10." + str(i) + ".1"
         netmask = "255.255.255.0"
@@ -109,6 +123,7 @@ def do_work(logger, session, enterprise, queue, thread_id):
 
     enterprise.fetch()
     domain.fetch()
+    zone.fetch()
 
     for fip in domain.floating_ips.get():
         vport = fip.vports.get()[0]
@@ -139,12 +154,111 @@ def do_work(logger, session, enterprise, queue, thread_id):
         rt_vports = []
         rt_vports.append(host_vport)
         rt.assign(rt_vports, vsdk.NUVPort)
-
         i = i + 1
+
     # TODO: Create policy group
     pg = vsdk.NUPolicyGroup(name='NFV-TEST-PG')
     domain.create_child(pg)
     pg.assign(pg_vports, vsdk.NUVPort)
+
+    ingress_acl = vsdk.NUIngressACLTemplate(
+        name='NFV Ingress ACLs',
+        priority_type='NONE',
+        priority=100,
+        default_allow_non_ip=False,
+        default_allow_ip=False,
+        allow_l2_address_spoof=False,
+        active=True
+    )
+    domain.create_child(ingress_acl, async=False)
+
+    ingress_acl_entry = vsdk.NUIngressACLEntryTemplate(
+        action='FORWARD',
+        description='NFV policy Group Ingress rule',
+        ether_type='0x0800',
+        flow_logging_enabled=False,
+        location_type='ANY',
+        network_type='POLICYGROUP',
+        network_id=pg.id,
+        priority=1000,
+        protocol='ANY',
+        reflexive=False,
+        dscp='*'
+    )
+    ingress_acl.create_child(ingress_acl_entry, async=False)
+
+    egress_acl = vsdk.NUEgressACLTemplate(
+        name='NFV Egress ACLs',
+        priority_type='NONE',
+        priority=100,
+        default_allow_non_ip=False,
+        default_allow_ip=False,
+        allow_l2_address_spoof=False,
+        active=True
+    )
+    domain.create_child(egress_acl, async=False)
+
+    egress_acl_entry = vsdk.NUEgressACLEntryTemplate(
+        action='FORWARD',
+        description='NFV policy Group Egress rule',
+        ether_type='0x0800',
+        flow_logging_enabled=False,
+        location_type='ANY',
+        network_type='POLICYGROUP',
+        network_id=pg.id,
+        priority=1000,
+        protocol='ANY',
+        reflexive=False,
+        dscp='*'
+    )
+    egress_acl.create_child(egress_acl_entry, async=False)
+
+    forward_acl = vsdk.NUIngressAdvFwdTemplate(
+        name='NFV Foroward ACLs',
+        priority_type='NONE',
+        priority=100,
+        default_allow_non_ip=False,
+        default_allow_ip=False,
+        active=True
+    )
+    domain.create_child(forward_acl, async=False)
+
+    network_macro_group = enterprise.network_macro_groups.get_first(filter="name == 'NFV-MACRO-GROUP'")
+    ingress_fwd_entry = vsdk.NUIngressAdvFwdEntryTemplate(
+        action='FORWARD',
+        description='NFV policy Group Forward rule',
+        ether_type='0x0800',
+        flow_logging_enabled=False,
+        location_type='ZONE',
+        location_id=zone.id,
+        network_type='NETWORK_MACRO_GROUP',
+        network_id=network_macro_group.id,
+        priority=50000,
+        protocol='ANY',
+        dscp='*'
+    )
+    forward_acl.create_child(ingress_fwd_entry, async=False)
+
+    i = 0
+    for subnet in domain.subnets.get():
+        priority = 100000 + i * 100
+        rt_name = 'NFV-TEST-RT-%d' % i
+        rt = domain.redirection_targets.get_first(filter="name == '%s'" % rt_name)
+        ingress_fwd_entry = vsdk.NUIngressAdvFwdEntryTemplate(
+            action='REDIRECT',
+            description='NFV policy Group Redirect rule',
+            ether_type='0x0800',
+            flow_logging_enabled=False,
+            location_type='SUBNET',
+            location_id=subnet.id,
+            network_type='ANY',
+            redirect_vport_tag_id=rt.id,
+            priority=priority,
+            protocol='ANY',
+            dscp='*'
+        )
+        forward_acl.create_child(ingress_fwd_entry, async=False)
+        i = i + 1
 
 
 def clear(session):
@@ -179,6 +293,7 @@ def worker(logger, session, enterprise, queue, thread_id):
     start = time.time()
     try:
         logger.info('Thread %s start at time %s' % (str(thread_id), str(start)))
+        print 'Thread %s start at time %s' % (str(thread_id), str(start))
         do_work(logger, session, enterprise, queue, thread_id)
     except Exception, e:
         logger.error('NFV Testing on VSD failed on thread %s.' % (str(thread_id)))
@@ -189,6 +304,7 @@ def worker(logger, session, enterprise, queue, thread_id):
 
     done = time.time()
     logger.info("Thread %s success at time %s" % (str(thread_id), str(done)))
+    print "Thread %s finish at time %s" % (str(thread_id), str(done))
     queue.put("Thread %s success about %s seconds" % (str(thread_id), str(done - start)))
     return 0
 
@@ -199,7 +315,7 @@ def collector(number_of_process, queue):
     for i in range(number_of_process):
         result = queue.get()
         results.append(result)
-        print "Thread %d return with result %s" % (i, result)
+        print "%s" % (result)
 
     with open('results', 'w') as f:
         f.write('\n'.join(str(result)[:] for result in results))
@@ -253,6 +369,10 @@ def main():
         logger.critical('Caught exception: %s' % str(e))
         return 1
 
+    if clean:
+        print "Clear resources now..."
+        clear(session)
+
     enterprise = prepare(logger, session)
     if enterprise is None:
         print "Prepare NFV performa testing failed, please check the log."
@@ -263,7 +383,7 @@ def main():
     record = []
 
     queue = multiprocessing.Queue(100)
-    thread_num = 1
+
     for i in range(thread_num):
         worker_process = multiprocessing.Process(target=worker, args=(logger, session, enterprise, queue, i))
         worker_process.start()
@@ -278,10 +398,6 @@ def main():
     queue.close()
 
     collector_process.join()
-
-    if clean:
-        print "Clear resources now..."
-        clear(session)
 
     return 0
 
