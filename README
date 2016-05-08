@@ -7,12 +7,12 @@
     3).Modify VRSG_PORT_ID to VRS-G Port ID which will be used as uplink
     4).Modify VLAN_BASE to the correct vlan ID that could be accepted by VRS-G port VLAN range 
 4.Run scripts with cli
-    python nfv-test.py -H 135.227.144.161 -P 8443 -u csproot -p csproot -E csp -l log  -t 5 –c
+    python nfv-test.py -H 135.227.144.161 -P 8443 -u csproot -p csproot -E csp -l log -t 5 
 
-    Notes:
-    -l log: write logs to file log
-    -t 5: five threads
-    -c: clean resource before test begin
-    -v, -d: write detail logs into log file
-    -h: for help
+    Important Options:
+    -l: Write logs to the file
+    -t: Threads numbers,default 1
+    -c: Clean resource before test begin.Clean resource will wait a long time, if you don’t want to clean, please modify VLAN_BASE to avoid conflicts.
+    -v, -d: Write detail logs into log file
+    -h: For help
 5.After test finish, check the file result, will contain the result of test

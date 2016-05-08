@@ -260,20 +260,31 @@ def do_work(logger, session, enterprise, queue, thread_id):
         i = i + 1
 
 
+def do_clear(domain):
+    """Do clear resources work."""
+    for subnet in domain.subnets.get():
+        for vport in subnet.vports.get():
+            for host_interface in vport.host_interfaces.get():
+                host_interface.delete()
+            vport.delete()
+        subnet.delete()
+    domain.delete()
+
+
 def clear(session):
     """Clear domain and enterrpise created during test."""
+    record = []
+
     print "Clear domains ..."
     for domain in session.domains.get():
         if 'NFV-DOMAIN-' in domain.name:
-            for subnet in domain.subnets.get():
-                for vport in subnet.vports.get():
-                    for host_interface in vport.host_interfaces.get():
-                        host_interface.delete()
-                    vport.delete()
-                subnet.delete()
-            domain.delete()
+            clear_process = multiprocessing.Process(target=do_clear, args=(domain, ))
+            clear_process.start()
+            record.append(clear_process)
 
-    print "Clear enterprises ..."
+    for clear_process in record:
+        clear_process.join()
+
     for enterprise in session.enterprises.get():
         if 'NFV-ENTERPRISE-' in enterprise.name:
             enterprise.delete()
@@ -283,6 +294,8 @@ def clear(session):
     vsg_port.fetch()
     for vlan in vsg_port.vlans.get():
         vlan.delete()
+
+    print "Clear resources success!"
 
 
 def worker(logger, session, enterprise, queue, thread_id):
