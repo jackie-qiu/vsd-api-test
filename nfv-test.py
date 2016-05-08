@@ -45,8 +45,8 @@ def get_args():
     parser.add_argument('-P', '--nuage-port', required=False, help='The Nuage VSD/SDK server port to connect to (default = 8443)', dest='nuage_port', type=int, default=8443)
     parser.add_argument('-p', '--nuage-password', required=False, help='The password with which to connect to the Nuage VSD/SDK host. If not specified, the user is prompted at runtime for a password', dest='nuage_password', type=str)
     parser.add_argument('-u', '--nuage-user', required=True, help='The username with which to connect to the Nuage VSD/SDK host', dest='nuage_username', type=str)
-    parser.add_argument('-t', '--thread-num', required=False, help='The number of thread for perforamce test', dest='thread_num', type=int, default=1)
-    parser.add_argument('-c', '--clean', required=False, help='Clean the data after test', dest='clean', action='store_true')
+    parser.add_argument('-t', '--thread-num', required=False, help='The number of threads for perforamce test', dest='thread_num', type=int, default=1)
+    parser.add_argument('-c', '--clean', required=False, help='Clean the resource before test', dest='clean', action='store_true')
     parser.add_argument('-v', '--verbose', required=False, help='Enable verbose output', dest='verbose', action='store_true')
     args = parser.parse_args()
     return args

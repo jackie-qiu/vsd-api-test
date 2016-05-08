@@ -1,0 +1,18 @@
+1.pip install vspk=3.2.4.134
+2.VSD preparation
+    1). Create new organization profile with Floating Ips Quota to 4*thread_num at least
+3.Modify global variables in nfv-test.py
+    1).Modify ENTERPRISE_PROFILE_ID to the organizaiton profile ID
+    2).Modify SHARE_NETWORK_RESOURCE_ID to the share network resource to be used during test
+    3).Modify VRSG_PORT_ID to VRS-G Port ID which will be used as uplink
+    4).Modify VLAN_BASE to the correct vlan ID that could be accepted by VRS-G port VLAN range 
+4.Run scripts with cli
+    python nfv-test.py -H 135.227.144.161 -P 8443 -u csproot -p csproot -E csp -l log  -t 5 –c
+
+    Notes:
+    -l log: write logs to file log
+    -t 5: five threads
+    -c: clean resource before test begin
+    -v, -d: write detail logs into log file
+    -h: for help
+5.After test finish, check the file result, will contain the result of test
