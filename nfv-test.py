@@ -174,6 +174,8 @@ def do_work(logger, session, enterprise, queue, thread_id):
     ingress_acl_entry = vsdk.NUIngressACLEntryTemplate(
         action='FORWARD',
         description='NFV policy Group Ingress rule',
+        destination_port=None,
+        source_port=None,
         ether_type='0x0800',
         flow_logging_enabled=False,
         location_type='ANY',
@@ -200,6 +202,8 @@ def do_work(logger, session, enterprise, queue, thread_id):
     egress_acl_entry = vsdk.NUEgressACLEntryTemplate(
         action='FORWARD',
         description='NFV policy Group Egress rule',
+        destination_port=None,
+        source_port=None,
         ether_type='0x0800',
         flow_logging_enabled=False,
         location_type='ANY',
@@ -226,6 +230,8 @@ def do_work(logger, session, enterprise, queue, thread_id):
     ingress_fwd_entry = vsdk.NUIngressAdvFwdEntryTemplate(
         action='FORWARD',
         description='NFV policy Group Forward rule',
+        destination_port=None,
+        source_port=None,
         ether_type='0x0800',
         flow_logging_enabled=False,
         location_type='ZONE',
@@ -246,6 +252,8 @@ def do_work(logger, session, enterprise, queue, thread_id):
         ingress_fwd_entry = vsdk.NUIngressAdvFwdEntryTemplate(
             action='REDIRECT',
             description='NFV policy Group Redirect rule',
+            destination_port=None,
+            source_port=None,
             ether_type='0x0800',
             flow_logging_enabled=False,
             location_type='SUBNET',
