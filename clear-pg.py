@@ -16,13 +16,13 @@
 import argparse
 import getpass
 import multiprocessing
-from vspk import v4_0 as vsdk
-"""
+
+"""from vspk import v4_0 as vsdk"""
+
 try:
     from vspk import v3_2 as vsdk
 except ImportError:
     from vspk.vsdk import v3_2 as vsdk
-"""
 
 
 def get_args():
@@ -106,8 +106,6 @@ def main():
             domains = session.domains.get()
             l2domains = session.l2_domains.get()
         elif nuage_l3domain is not None:
-            import pdb
-            pdb.set_trace()
             domain = vsdk.NUDomain(id=nuage_l3domain)
             domain.fetch()
             domains.append(domain)
